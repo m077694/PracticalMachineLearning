@@ -1,0 +1,155 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Joel Hickman"
+date: "5/2/2020"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: "Using Wireless Wearable Technology to Predict Weightlifting Technique"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+### Overview and Executive Summary
+
+In this project, I will use the *HAR data* http://groupware.les.inf.puc-rio.br/har using wearable technology (Jawbone Up, Nike Fuelband, and Fitbit) to try and predict how well an individual preferms weightlifting exercises.  The "classe" variable within the data determines the manner in which the participant performed the exercise and will be used as the prediction variable.  
+
+
+### Exploratory Data Analysis
+
+```{r}
+rm(list = ls())
+library(knitr)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(randomForest)
+library(gbm)
+library(dplyr)
+```
+
+# Read in Training and Test Set Data
+
+```{r}
+set.seed(12512)
+
+trainData <- read.csv("pml_training.csv", na.strings = c("", "NA"), header = TRUE)
+testData  <- read.csv("pml_testing.csv", na.strings = c("", "NA"), header = TRUE)
+```
+
+# Clean Data
+
+```{r}
+dim(trainData)
+head(trainData)
+```
+
+After observation, the data set contains a number of variables with a large number of missing (NA) data.  We will remove variables with over 90% NA's from the both the training and test data sets as they add little to no value for model prediction.  Some of the variables at the beginning of the data set can be removed since they are either ID variables or date/time stamp related.  
+
+```{r}
+trainData <- trainData[,-c(1:7)]
+testData <- testData[,-c(1:7)]
+
+varsNA <- sapply(trainData, function(x) mean(is.na(x))) > 0.9
+trainData <- trainData[,varsNA==FALSE]
+testData  <- testData[,varsNA==FALSE]
+
+dim(trainData)
+```
+
+# Partition the Data
+
+Since the sample size of the training data has a sufficient number of rows, I've decided to further split the training data into training (60%) and validation (40%) subsets.
+
+```{r}
+library(iterators)
+library(parallel)
+library(foreach)
+library(doParallel)
+
+cluster <- makeCluster(detectCores()-1)
+registerDoParallel(cluster)
+getDoParWorkers()
+
+set.seed(54242)
+trainData$classe <- as.factor(trainData$classe)
+testData$classe  <= as.factor(testData$classe)
+inTrain <- createDataPartition(y = trainData$classe, p = 0.6, list = FALSE)
+trainData <- trainData[inTrain,]
+valData   <- trainData[-inTrain,]
+```
+
+# Modeling
+
+The following methods will be evaluated:
+
+    1. Decision Trees
+    2. Random Forests
+    3. Gradient Boosted Machines
+    
+# Decision Trees
+
+Start by training the model with decision trees.  We will set each of the models to run with 5-fold cross validation.
+
+```{r}
+set.seed(7527)
+library(e1071)
+trControl <- trainControl(method="cv", number = 5, allowParallel = TRUE)
+model.dt <- train(classe ~ ., data = trainData, method = "rpart", trControl = trControl)
+fancyRpartPlot(model.dt$finalModel)
+```
+
+Next, predict on the validation and evaluate model performance.
+
+```{r}
+predict.dt <- predict(model.dt, newdata = valData)
+confusionMatrix(predict.dt, valData$classe)
+```
+
+# Random Forests
+
+Start by training the model on the training data.
+
+```{r}
+set.seed(7527)
+model.rf <- train(classe ~ ., data = trainData, method = "rf", ntree = 250, trControl = trControl, verbose = TRUE)
+model.rf
+plot(model.rf, main = "Random Forest: Error Rate vs. Number of Trees")
+```
+
+Next, apply the model to the validation data and evaluate model performance.
+
+```{r}
+predict.rf <- predict(model.rf, newdata = valData)
+confusionMatrix(predict.rf, valData$classe)
+```
+
+# Gradient Boosted Machines
+
+Next, we run a GBM model on the training data.
+
+```{r}
+set.seed(7527)
+model.gbm <- train(classe ~ ., data = trainData, method = "gbm", trControl = trControl, verbose = TRUE)
+model.gbm$finalModel
+```
+
+And then we run the GBM model on the validation data set.
+
+```{r}
+predict.gbm <- predict(model.gbm, newdata = valData)
+plot(predict.gbm)
+confusionMatrix(predict.gbm, valData$classe)
+```
+
+# Pick the best model to run on the test dataset
+
+Random Forests modeling technique has the best accuracy of 100%, therefore, this model will be used on the test data.
+
+```{r}
+predict.test.RF <- predict(model.rf, newdata = testData)
+predict.test.RF
+```
